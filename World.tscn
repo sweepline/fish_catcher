@@ -1,0 +1,261 @@
+[gd_scene load_steps=14 format=2]
+
+[ext_resource path="res://WaterDistortion.png" type="Texture" id=1]
+[ext_resource path="res://PerlinNoise.png" type="Texture" id=2]
+[ext_resource path="res://lightwood.tres" type="Material" id=3]
+[ext_resource path="res://darkwood.tres" type="Material" id=5]
+[ext_resource path="res://GameScript.gd" type="Script" id=6]
+[ext_resource path="res://Catcher.tscn" type="PackedScene" id=7]
+
+[sub_resource type="SpatialMaterial" id=1]
+albedo_color = Color( 0.109804, 0.6, 0.447059, 1 )
+
+[sub_resource type="SpatialMaterial" id=2]
+albedo_color = Color( 0.109804, 0.6, 0.447059, 1 )
+
+[sub_resource type="SpatialMaterial" id=3]
+albedo_color = Color( 0.396078, 0.305882, 0.0313726, 1 )
+
+[sub_resource type="Shader" id=4]
+code = "/**
+* Ported from the original unity shader by Erik Roystan Ross
+* https://roystan.net/articles/toon-water.html
+* https://github.com/IronWarrior/ToonWaterShader
+* Camera Depth taken from Bastiaan Olij's video on: https://www.youtube.com/watch?v=Jq3he9Lbj7M
+*/
+
+shader_type spatial;
+
+const float SMOOTHSTEP_AA = 0.01;
+
+uniform sampler2D surfaceNoise;
+uniform sampler2D distortNoise;
+
+uniform float beer_factor = 0.8;
+
+uniform float foam_distance = 0.01;
+uniform float foam_max_distance = 0.4;
+uniform float foam_min_distance = 0.04;
+uniform vec4 foam_color: hint_color  = vec4(1.0);
+
+uniform vec2 surface_noise_tiling = vec2(1.0, 4.0);
+uniform vec3 surface_noise_scroll = vec3(0.03, 0.03, 0.0);
+uniform float surface_noise_cutoff: hint_range(0, 1) = 0.777;
+uniform float surface_distortion_amount: hint_range(0, 1) = 0.27;
+
+uniform vec4 _DepthGradientShallow: hint_color = vec4(0.325, 0.807, 0.971, 0.725);
+uniform vec4 _DepthGradientDeep: hint_color = vec4(0.086, 0.407, 1, 0.749);
+uniform float _DepthMaxDistance: hint_range(0, 1) = 1.0;
+uniform float _DepthFactor = 1.0;
+
+varying vec2 noiseUV;
+varying vec2 distortUV;
+varying vec3 viewNormal;
+
+vec4 alphaBlend(vec4 top, vec4 bottom)
+{
+	vec3 color = (top.rgb * top.a) + (bottom.rgb * (1.0 - top.a));
+	float alpha = top.a + bottom.a * (1.0 - top.a);
+	
+	return vec4(color, alpha);
+}
+
+void vertex() {
+	viewNormal = (MODELVIEW_MATRIX * vec4(NORMAL, 0.0)).xyz;
+	noiseUV = UV * surface_noise_tiling;
+	distortUV = UV;
+}
+
+void fragment(){
+	// https://www.youtube.com/watch?v=Jq3he9Lbj7M
+	float depth = texture(DEPTH_TEXTURE, SCREEN_UV).r;
+	depth = depth * 2.0 - 1.0;
+	depth = PROJECTION_MATRIX[3][2] / (depth + PROJECTION_MATRIX[2][2]);
+	depth = depth + VERTEX.z;
+	depth = exp(-depth * beer_factor);
+	depth = 1.0 - depth;
+	
+	// Still unsure how to get properly the NORMAL from the camera
+	// this was my best attempt
+	vec3 existingNormal = vec3(dFdx(depth), dFdy(depth), 0);
+	
+	float normalDot = clamp(dot(existingNormal.xyz, viewNormal), 0.0, 1.0);
+	float foamDistance = mix(foam_max_distance, foam_min_distance, normalDot);
+	
+	float foamDepth = clamp(depth / foamDistance, 0.0, 1.0);
+	float surfaceNoiseCutoff = foamDepth * surface_noise_cutoff;
+	
+	vec4 distortNoiseSample = texture(distortNoise, distortUV);
+	vec2 distortAmount = (distortNoiseSample.xy * 2.0 -1.0) * surface_distortion_amount;
+	
+	vec2 noise_uv = vec2(
+		(noiseUV.x + TIME * surface_noise_scroll.x) + distortAmount.x , 
+		(noiseUV.y + TIME * surface_noise_scroll.y + distortAmount.y)
+	);
+	float surfaceNoiseSample = texture(surfaceNoise, noise_uv).r;
+	float surfaceNoiseAmount = smoothstep(surfaceNoiseCutoff - SMOOTHSTEP_AA, surfaceNoiseCutoff + SMOOTHSTEP_AA, surfaceNoiseSample);
+	
+	float waterDepth = clamp(depth / _DepthMaxDistance, 0.0, 1.0) * _DepthFactor;
+	vec4 waterColor = mix(_DepthGradientShallow, _DepthGradientDeep, waterDepth);
+
+	vec4 surfaceNoiseColor = foam_color;
+    surfaceNoiseColor.a *= surfaceNoiseAmount;
+	vec4 color = alphaBlend(surfaceNoiseColor, waterColor);
+	
+	ALBEDO = color.rgb;
+	ALPHA = color.a;
+}"
+
+[sub_resource type="ShaderMaterial" id=5]
+shader = SubResource( 4 )
+shader_param/beer_factor = 0.6
+shader_param/foam_distance = 0.01
+shader_param/foam_max_distance = 0.8
+shader_param/foam_min_distance = 0.04
+shader_param/foam_color = Color( 1, 1, 1, 1 )
+shader_param/surface_noise_tiling = Vector2( 1, 2 )
+shader_param/surface_noise_scroll = Vector3( 0.099, 0.05, 0 )
+shader_param/surface_noise_cutoff = 0.777
+shader_param/surface_distortion_amount = 0.15
+shader_param/_DepthGradientShallow = Color( 0.325, 0.807, 0.971, 0.725 )
+shader_param/_DepthGradientDeep = Color( 0.086, 0.407, 1, 0.749 )
+shader_param/_DepthMaxDistance = 1.0
+shader_param/_DepthFactor = 2.0
+shader_param/surfaceNoise = ExtResource( 2 )
+shader_param/distortNoise = ExtResource( 1 )
+
+[sub_resource type="QuadMesh" id=6]
+material = SubResource( 5 )
+size = Vector2( 60, 8 )
+
+[sub_resource type="BoxShape" id=7]
+extents = Vector3( 15.8043, 8.87407, 1 )
+
+[node name="World" type="Spatial"]
+script = ExtResource( 6 )
+
+[node name="Environment" type="Spatial" parent="."]
+__meta__ = {
+"_edit_group_": true,
+"_edit_lock_": true
+}
+
+[node name="DirectionalLight" type="DirectionalLight" parent="Environment"]
+transform = Transform( -0.102403, 0.725951, -0.68008, 0.108092, 0.687747, 0.717858, 0.988853, -3.82948e-07, -0.148897, -11.1826, 12.1432, 0 )
+__meta__ = {
+"_edit_lock_": true
+}
+
+[node name="Ground" type="CSGBox" parent="Environment"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.000597, 0.0875874, 0.052948 )
+width = 40.0
+height = 10.0
+depth = 60.0
+material = SubResource( 1 )
+__meta__ = {
+"_edit_lock_": true
+}
+
+[node name="CSGBox" type="CSGBox" parent="Environment/Ground"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.75, 0 )
+operation = 2
+width = 5.0
+height = 0.5
+depth = 60.0
+material = SubResource( 2 )
+
+[node name="CSGCylinder" type="CSGCylinder" parent="Environment/Ground"]
+transform = Transform( 1, 0, 0, 0, -4.37114e-08, 1, 0, -1, -4.37114e-08, 0, 4.5, 0 )
+operation = 2
+radius = 2.5
+height = 60.0
+sides = 16
+material = SubResource( 3 )
+
+[node name="Water" type="MeshInstance" parent="Environment"]
+transform = Transform( -4.37114e-08, -1, -4.37114e-08, 0, -4.37114e-08, 1, -1, 4.37114e-08, 1.91069e-15, -0.344525, 4.9, 0 )
+mesh = SubResource( 6 )
+material/0 = null
+__meta__ = {
+"_edit_lock_": true
+}
+
+[node name="WaterBottom" type="MeshInstance" parent="Environment"]
+transform = Transform( -4.37114e-08, -1, -4.37114e-08, 0, -4.37114e-08, 1, -1, 4.37114e-08, 1.91069e-15, -0.344525, 2.49711, 0 )
+mesh = SubResource( 6 )
+material/0 = null
+__meta__ = {
+"_edit_lock_": true
+}
+
+[node name="Camera" type="Camera" parent="Environment"]
+transform = Transform( 1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 10, 15 )
+__meta__ = {
+"_edit_lock_": true
+}
+
+[node name="Bridge" type="Spatial" parent="Environment"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.543, 13.5 )
+__meta__ = {
+"_edit_lock_": true
+}
+
+[node name="CSGCylinder3" type="CSGCylinder" parent="Environment/Bridge"]
+transform = Transform( 2.08238, 0, 0, 0, -4.37114e-08, 1, 0, -1, -4.37114e-08, 0, -2.4635, -0.629397 )
+radius = 3.47636
+height = 0.1
+sides = 24
+material = ExtResource( 3 )
+
+[node name="CSGCylinder2" type="CSGCylinder" parent="Environment/Bridge/CSGCylinder3"]
+transform = Transform( 1, 0, 0, 0, 1, -2.13163e-14, 0, 2.13163e-14, 1, 0, 0, -0.134304 )
+operation = 2
+radius = 3.47636
+height = 0.3
+sides = 24
+
+[node name="CSGCylinder5" type="CSGCylinder" parent="Environment/Bridge"]
+transform = Transform( 2.08238, 0, 0, 0, -4.37114e-08, 1, 0, -1, -4.37114e-08, 0, -2.4635, 0.395847 )
+radius = 3.47636
+height = 0.1
+sides = 24
+material = ExtResource( 3 )
+
+[node name="CSGCylinder2" type="CSGCylinder" parent="Environment/Bridge/CSGCylinder5"]
+transform = Transform( 1, 0, 0, 0, 1, -2.13163e-14, 0, 2.13163e-14, 1, 0, 0, -0.134304 )
+operation = 2
+radius = 3.47636
+height = 0.3
+sides = 24
+
+[node name="CSGCylinder4" type="CSGCylinder" parent="Environment/Bridge"]
+transform = Transform( 2.08238, 0, 0, 0, -4.37114e-08, 1, 0, -1, -4.37114e-08, 0, -2.51255, -0.101714 )
+radius = 3.47636
+sides = 24
+material = ExtResource( 5 )
+
+[node name="CSGCylinder2" type="CSGCylinder" parent="Environment/Bridge/CSGCylinder4"]
+transform = Transform( 1, 0, 0, 0, 1, -2.13163e-14, 0, 2.13163e-14, 1, 0, 0, -0.134304 )
+operation = 2
+radius = 3.47636
+sides = 24
+
+[node name="CSGCylinder" type="CSGCylinder" parent="Environment/Bridge"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.57665, 0 )
+radius = 0.2
+height = 5.0
+material = ExtResource( 3 )
+
+[node name="Catcher" parent="." instance=ExtResource( 7 )]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.9, 11 )
+
+[node name="DespawnArea" type="Area" parent="."]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.3802, 28.2084 )
+monitorable = false
+
+[node name="CollisionShape" type="CollisionShape" parent="DespawnArea"]
+shape = SubResource( 7 )
+
+[node name="SpawnTimer" type="Timer" parent="."]
+
+[connection signal="area_entered" from="DespawnArea" to="." method="_on_DespawnArea_area_entered"]
